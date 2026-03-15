@@ -253,6 +253,123 @@ export default function App() {
     return isFinite(speed) ? speed : 0;
   };
 
+  const processParsedData = (parsedData: DataRow[], name: string) => {
+    if (parsedData.length === 0) {
+      setError('The CSV file is empty.');
+      return;
+    }
+
+    const extractedHeaders = Object.keys(parsedData[0]);
+    
+    // Calculate Speed and Elapsed Time
+    const latCol = extractedHeaders.find(h => h.toLowerCase().match(/^lat(itude)?$/));
+    const lonCol = extractedHeaders.find(h => h.toLowerCase().match(/^lon(gitude)?$/));
+    const timeCol = extractedHeaders.find(h => h.toLowerCase().includes('time') || h.toLowerCase().includes('date') || h.toLowerCase() === 'timestamp_iso');
+    const accelLonCol = extractedHeaders.find(h => h.toLowerCase().includes('accel_lon') || h.toLowerCase() === 'raw_ay_g');
+    
+    let speedIntegrated = 0;
+    let lastSmoothedSpeed = 0;
+    let startTimeMs: number | null = null;
+
+    const processedData = parsedData.map((row, idx) => {
+      let speed = 0;
+      const prev = idx > 0 ? parsedData[idx - 1] : null;
+
+      const tCurrMs = typeof row[timeCol] === 'string' ? new Date(row[timeCol]).getTime() : Number(row[timeCol]);
+      if (idx === 0 && !isNaN(tCurrMs)) startTimeMs = tCurrMs;
+      const elapsedTime = startTimeMs !== null && !isNaN(tCurrMs) ? (tCurrMs - startTimeMs) / 1000 : idx;
+
+      if (latCol && lonCol && timeCol && prev) {
+        // GPS Speed
+        speed = calculateSpeed(
+          Number(row[latCol]), Number(row[lonCol]),
+          Number(prev[latCol]), Number(prev[lonCol]),
+          row[timeCol], prev[timeCol]
+        );
+      } else if (accelLonCol && timeCol && prev) {
+        // Inertial Speed Fallback (Integration)
+        const tPrev = typeof prev[timeCol] === 'string' ? new Date(prev[timeCol]).getTime() : Number(prev[timeCol]);
+        const dt = Math.abs(tCurrMs - tPrev) / 1000; // seconds
+        
+        if (!isNaN(dt) && dt > 0 && dt < 1) { // Sanity check for dt
+          const accelG = Number(row[accelLonCol]) || 0;
+          // v = u + at. 1g = 21.937 mph/s
+          // We use a small decay factor to prevent infinite drift
+          speedIntegrated = (speedIntegrated + (accelG * 21.937 * dt)) * 0.995;
+          if (speedIntegrated < 0) speedIntegrated = 0;
+          speed = speedIntegrated;
+        }
+      }
+      
+      // Smoothing
+      const smoothedSpeed = idx > 0 ? lastSmoothedSpeed * 0.7 + speed * 0.3 : speed;
+      lastSmoothedSpeed = smoothedSpeed;
+      return { 
+        ...row, 
+        'SPEED_MPH': Number(smoothedSpeed.toFixed(2)) || 0,
+        'ELAPSED_TIME': Number(elapsedTime.toFixed(3))
+      };
+    });
+
+    if (!extractedHeaders.includes('SPEED_MPH')) {
+      extractedHeaders.push('SPEED_MPH');
+    }
+    if (!extractedHeaders.includes('ELAPSED_TIME')) {
+      extractedHeaders.push('ELAPSED_TIME');
+    }
+
+    setHeaders(extractedHeaders);
+    setData(processedData);
+    setFileName(name);
+
+    // Auto-select axes and group metrics
+    if (extractedHeaders.length > 0) {
+      const xKey = 'ELAPSED_TIME';
+      setXAxisKey(xKey);
+
+      const numericCols = extractedHeaders.filter(h => h !== xKey && typeof processedData[0][h] === 'number');
+      setNumericKeys(numericCols);
+
+      const newPanels = [
+        { id: 'live', activeTabIdx: 0, tabs: [{ id: 'live-tab', type: 'telemetry-group', title: 'ALL TELEMETRY', config: { metrics: numericCols } }] },
+        { id: 'temp', activeTabIdx: 0, tabs: [{ id: 'temp-tab', type: 'telemetry-group', title: 'TEMPERATURE PLOT', config: { metrics: numericCols.filter(c => c.toLowerCase().includes('temp')) } }] },
+        { id: 'accel', activeTabIdx: 0, tabs: [{ id: 'accel-tab', type: 'telemetry-group', title: 'ACCELERATION', config: { metrics: numericCols.filter(c => (c.toLowerCase().includes('accel') || c.toLowerCase().match(/^ax|ay|az$/i)) && c.toLowerCase() !== 'raw_ay_g') } }] },
+        { id: 'mag', activeTabIdx: 0, tabs: [{ id: 'mag-tab', type: 'telemetry-group', title: 'MAGNETOMETER', config: { metrics: numericCols.filter(c => c.toLowerCase().includes('mag')) } }] },
+        { id: 'pitch-roll-yaw', activeTabIdx: 0, tabs: [{ id: 'pitch-roll-yaw-tab', type: 'telemetry-group', title: 'PITCH, ROLL & YAW', config: { metrics: numericCols.filter(c => ['pitch_deg', 'roll_deg', 'yaw_deg'].includes(c.toLowerCase())) } }] },
+        { id: 'friction', activeTabIdx: 0, tabs: [{ id: 'friction-tab', type: 'friction', title: 'G-G DIAGRAM' }] },
+        { id: 'gyro', activeTabIdx: 0, tabs: [{ id: 'gyro-tab', type: 'gyro', title: 'GYRO SCATTER PLOT' }] }
+      ];
+
+      const newLayout: Layout[] = [
+        { i: 'live', x: 0, y: 0, w: 4, h: 6 },
+        { i: 'temp', x: 0, y: 6, w: 4, h: 6 },
+        { i: 'accel', x: 4, y: 0, w: 4, h: 4 },
+        { i: 'mag', x: 4, y: 4, w: 4, h: 4 },
+        { i: 'pitch-roll-yaw', x: 4, y: 8, w: 4, h: 4 },
+        { i: 'friction', x: 8, y: 0, w: 4, h: 6 },
+        { i: 'gyro', x: 8, y: 6, w: 4, h: 6 }
+      ];
+
+      setPanels(newPanels);
+      setLayout(newLayout);
+
+      const latGCol = extractedHeaders.find(h => h.toLowerCase().match(/lat.*g|g.*lat|accel.*x|ax/));
+      const longGCol = extractedHeaders.find(h => h.toLowerCase().match(/lon.*g|g.*lon|accel.*y|ay/));
+      if (latGCol) setFrictionXKey(latGCol);
+      if (longGCol) setFrictionYKey(longGCol);
+
+      const gyroXCol = extractedHeaders.find(h => h.toLowerCase().match(/gyro.*x|gx/));
+      const gyroYCol = extractedHeaders.find(h => h.toLowerCase().match(/gyro.*y|gy/));
+      if (gyroXCol) setGyroXKey(gyroXCol);
+      if (gyroYCol) setGyroYKey(gyroYCol);
+
+      const mapLatCol = extractedHeaders.find(h => h.toLowerCase().match(/^lat(itude)?$/));
+      const mapLonCol = extractedHeaders.find(h => h.toLowerCase().match(/^lon(gitude)?$/));
+      if (mapLatCol) setMapLatKey(mapLatCol);
+      if (mapLonCol) setMapLonKey(mapLonCol);
+    }
+  };
+
   const handleFileUpload = (file: File) => {
     if (!file.name.endsWith('.csv')) {
       setError('Please upload a valid CSV file.');
@@ -270,126 +387,35 @@ export default function App() {
         if (results.errors.length > 0) {
           console.warn('CSV Parsing warnings:', results.errors);
         }
-        
-        const parsedData = results.data as DataRow[];
-        if (parsedData.length === 0) {
-          setError('The CSV file is empty.');
-          return;
-        }
-
-        const extractedHeaders = Object.keys(parsedData[0]);
-        
-        // Calculate Speed and Elapsed Time
-        const latCol = extractedHeaders.find(h => h.toLowerCase().match(/^lat(itude)?$/));
-        const lonCol = extractedHeaders.find(h => h.toLowerCase().match(/^lon(gitude)?$/));
-        const timeCol = extractedHeaders.find(h => h.toLowerCase().includes('time') || h.toLowerCase().includes('date') || h.toLowerCase() === 'timestamp_iso');
-        const accelLonCol = extractedHeaders.find(h => h.toLowerCase().includes('accel_lon') || h.toLowerCase() === 'raw_ay_g');
-        
-        let speedIntegrated = 0;
-        let lastSmoothedSpeed = 0;
-        let startTimeMs: number | null = null;
-
-        const processedData = parsedData.map((row, idx) => {
-          let speed = 0;
-          const prev = idx > 0 ? parsedData[idx - 1] : null;
-
-          const tCurrMs = typeof row[timeCol] === 'string' ? new Date(row[timeCol]).getTime() : Number(row[timeCol]);
-          if (idx === 0 && !isNaN(tCurrMs)) startTimeMs = tCurrMs;
-          const elapsedTime = startTimeMs !== null && !isNaN(tCurrMs) ? (tCurrMs - startTimeMs) / 1000 : idx;
-
-          if (latCol && lonCol && timeCol && prev) {
-            // GPS Speed
-            speed = calculateSpeed(
-              Number(row[latCol]), Number(row[lonCol]),
-              Number(prev[latCol]), Number(prev[lonCol]),
-              row[timeCol], prev[timeCol]
-            );
-          } else if (accelLonCol && timeCol && prev) {
-            // Inertial Speed Fallback (Integration)
-            const tPrev = typeof prev[timeCol] === 'string' ? new Date(prev[timeCol]).getTime() : Number(prev[timeCol]);
-            const dt = Math.abs(tCurrMs - tPrev) / 1000; // seconds
-            
-            if (!isNaN(dt) && dt > 0 && dt < 1) { // Sanity check for dt
-              const accelG = Number(row[accelLonCol]) || 0;
-              // v = u + at. 1g = 21.937 mph/s
-              // We use a small decay factor to prevent infinite drift
-              speedIntegrated = (speedIntegrated + (accelG * 21.937 * dt)) * 0.995;
-              if (speedIntegrated < 0) speedIntegrated = 0;
-              speed = speedIntegrated;
-            }
-          }
-          
-          // Smoothing
-          const smoothedSpeed = idx > 0 ? lastSmoothedSpeed * 0.7 + speed * 0.3 : speed;
-          lastSmoothedSpeed = smoothedSpeed;
-          return { 
-            ...row, 
-            'SPEED_MPH': Number(smoothedSpeed.toFixed(2)) || 0,
-            'ELAPSED_TIME': Number(elapsedTime.toFixed(3))
-          };
-        });
-
-        if (!extractedHeaders.includes('SPEED_MPH')) {
-          extractedHeaders.push('SPEED_MPH');
-        }
-        if (!extractedHeaders.includes('ELAPSED_TIME')) {
-          extractedHeaders.push('ELAPSED_TIME');
-        }
-
-        setHeaders(extractedHeaders);
-        setData(processedData);
-
-        // Auto-select axes and group metrics
-        if (extractedHeaders.length > 0) {
-          const xKey = 'ELAPSED_TIME';
-          setXAxisKey(xKey);
-
-          const numericCols = extractedHeaders.filter(h => h !== xKey && typeof processedData[0][h] === 'number');
-          setNumericKeys(numericCols);
-
-          const newPanels = [
-            { id: 'live', activeTabIdx: 0, tabs: [{ id: 'live-tab', type: 'telemetry-group', title: 'ALL TELEMETRY', config: { metrics: numericCols } }] },
-            { id: 'temp', activeTabIdx: 0, tabs: [{ id: 'temp-tab', type: 'telemetry-group', title: 'TEMPERATURE PLOT', config: { metrics: numericCols.filter(c => c.toLowerCase().includes('temp')) } }] },
-            { id: 'accel', activeTabIdx: 0, tabs: [{ id: 'accel-tab', type: 'telemetry-group', title: 'ACCELERATION', config: { metrics: numericCols.filter(c => c.toLowerCase().includes('accel') || c.toLowerCase().match(/^ax|ay|az$/i)) } }] },
-            { id: 'mag', activeTabIdx: 0, tabs: [{ id: 'mag-tab', type: 'telemetry-group', title: 'MAGNETOMETER', config: { metrics: numericCols.filter(c => c.toLowerCase().includes('mag')) } }] },
-            { id: 'pitch-roll-yaw', activeTabIdx: 0, tabs: [{ id: 'pitch-roll-yaw-tab', type: 'telemetry-group', title: 'PITCH, ROLL & YAW', config: { metrics: numericCols.filter(c => ['pitch_deg', 'roll_deg', 'yaw_deg'].includes(c.toLowerCase())) } }] },
-            { id: 'friction', activeTabIdx: 0, tabs: [{ id: 'friction-tab', type: 'friction', title: 'G-G DIAGRAM' }] },
-            { id: 'gyro', activeTabIdx: 0, tabs: [{ id: 'gyro-tab', type: 'gyro', title: 'GYRO SCATTER PLOT' }] }
-          ];
-
-          const newLayout: Layout[] = [
-            { i: 'live', x: 0, y: 0, w: 4, h: 6 },
-            { i: 'temp', x: 0, y: 6, w: 4, h: 6 },
-            { i: 'accel', x: 4, y: 0, w: 4, h: 4 },
-            { i: 'mag', x: 4, y: 4, w: 4, h: 4 },
-            { i: 'pitch-roll-yaw', x: 4, y: 8, w: 4, h: 4 },
-            { i: 'friction', x: 8, y: 0, w: 4, h: 6 },
-            { i: 'gyro', x: 8, y: 6, w: 4, h: 6 }
-          ];
-
-          setPanels(newPanels);
-          setLayout(newLayout);
-
-          const latGCol = extractedHeaders.find(h => h.toLowerCase().match(/lat.*g|g.*lat|accel.*x|ax/));
-          const longGCol = extractedHeaders.find(h => h.toLowerCase().match(/lon.*g|g.*lon|accel.*y|ay/));
-          if (latGCol) setFrictionXKey(latGCol);
-          if (longGCol) setFrictionYKey(longGCol);
-
-          const gyroXCol = extractedHeaders.find(h => h.toLowerCase().match(/gyro.*x|gx/));
-          const gyroYCol = extractedHeaders.find(h => h.toLowerCase().match(/gyro.*y|gy/));
-          if (gyroXCol) setGyroXKey(gyroXCol);
-          if (gyroYCol) setGyroYKey(gyroYCol);
-
-          const latCol = extractedHeaders.find(h => h.toLowerCase().match(/^lat(itude)?$/));
-          const lonCol = extractedHeaders.find(h => h.toLowerCase().match(/^lon(gitude)?$/));
-          if (latCol) setMapLatKey(latCol);
-          if (lonCol) setMapLonKey(lonCol);
-        }
+        processParsedData(results.data as DataRow[], file.name);
       },
       error: (err) => {
         setError(`Failed to parse CSV: ${err.message}`);
       }
     });
+  };
+
+  const loadTestData = async () => {
+    setError(null);
+    try {
+      const response = await fetch('/test_data.csv');
+      if (!response.ok) throw new Error('Failed to fetch test data file');
+      const csvText = await response.text();
+      
+      Papa.parse(csvText, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          processParsedData(results.data as DataRow[], 'witmotion_raw_parsed_20260306_174117.csv');
+        },
+        error: (err) => {
+          setError(`Failed to parse test data: ${err.message}`);
+        }
+      });
+    } catch (err: any) {
+      setError(`Failed to load test data: ${err.message}`);
+    }
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -900,10 +926,16 @@ export default function App() {
         <div ref={containerRef} className="flex-1 flex flex-col bg-[#000000] relative min-w-0 overflow-hidden">
           
           {data.length === 0 ? (
-            <div className="absolute inset-0 flex items-center justify-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-6">
               <div className="text-[#333333] font-mono text-[24px] tracking-[2px] font-bold uppercase">
                 NO SIGNAL
               </div>
+              <button 
+                onClick={loadTestData}
+                className="bg-[#111111] text-[#FFCD00] border border-[#FFCD00] px-6 py-2 text-[12px] font-bold uppercase hover:bg-[#FFCD00] hover:text-black transition-all cursor-pointer shadow-[0_0_15px_rgba(255,205,0,0.2)]"
+              >
+                LOAD TEST DATA
+              </button>
             </div>
           ) : (
             mounted && (
