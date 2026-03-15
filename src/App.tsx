@@ -229,6 +229,30 @@ export default function App() {
     }
   };
 
+  const calculateSpeed = (lat1: number, lon1: number, lat2: number, lon2: number, t1: any, t2: any) => {
+    if (!lat1 || !lon1 || !lat2 || !lon2 || !t1 || !t2) return 0;
+    const R = 3958.8; // Earth radius in miles
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+    
+    // Handle ISO strings or numeric timestamps
+    const t1_ms = typeof t1 === 'string' ? new Date(t1).getTime() : Number(t1);
+    const t2_ms = typeof t2 === 'string' ? new Date(t2).getTime() : Number(t2);
+    
+    let timeDiffMs = Math.abs(t2_ms - t1_ms);
+    if (isNaN(timeDiffMs) || timeDiffMs === 0) return 0;
+    
+    const hours = timeDiffMs / (1000 * 3600);
+    const speed = distance / hours;
+    return isFinite(speed) ? speed : 0;
+  };
+
   const handleFileUpload = (file: File) => {
     if (!file.name.endsWith('.csv')) {
       setError('Please upload a valid CSV file.');
@@ -254,18 +278,73 @@ export default function App() {
         }
 
         const extractedHeaders = Object.keys(parsedData[0]);
+        
+        // Calculate Speed and Elapsed Time
+        const latCol = extractedHeaders.find(h => h.toLowerCase().match(/^lat(itude)?$/));
+        const lonCol = extractedHeaders.find(h => h.toLowerCase().match(/^lon(gitude)?$/));
+        const timeCol = extractedHeaders.find(h => h.toLowerCase().includes('time') || h.toLowerCase().includes('date') || h.toLowerCase() === 'timestamp_iso');
+        const accelLonCol = extractedHeaders.find(h => h.toLowerCase().includes('accel_lon') || h.toLowerCase() === 'raw_ay_g');
+        
+        let speedIntegrated = 0;
+        let lastSmoothedSpeed = 0;
+        let startTimeMs: number | null = null;
+
+        const processedData = parsedData.map((row, idx) => {
+          let speed = 0;
+          const prev = idx > 0 ? parsedData[idx - 1] : null;
+
+          const tCurrMs = typeof row[timeCol] === 'string' ? new Date(row[timeCol]).getTime() : Number(row[timeCol]);
+          if (idx === 0 && !isNaN(tCurrMs)) startTimeMs = tCurrMs;
+          const elapsedTime = startTimeMs !== null && !isNaN(tCurrMs) ? (tCurrMs - startTimeMs) / 1000 : idx;
+
+          if (latCol && lonCol && timeCol && prev) {
+            // GPS Speed
+            speed = calculateSpeed(
+              Number(row[latCol]), Number(row[lonCol]),
+              Number(prev[latCol]), Number(prev[lonCol]),
+              row[timeCol], prev[timeCol]
+            );
+          } else if (accelLonCol && timeCol && prev) {
+            // Inertial Speed Fallback (Integration)
+            const tPrev = typeof prev[timeCol] === 'string' ? new Date(prev[timeCol]).getTime() : Number(prev[timeCol]);
+            const dt = Math.abs(tCurrMs - tPrev) / 1000; // seconds
+            
+            if (!isNaN(dt) && dt > 0 && dt < 1) { // Sanity check for dt
+              const accelG = Number(row[accelLonCol]) || 0;
+              // v = u + at. 1g = 21.937 mph/s
+              // We use a small decay factor to prevent infinite drift
+              speedIntegrated = (speedIntegrated + (accelG * 21.937 * dt)) * 0.995;
+              if (speedIntegrated < 0) speedIntegrated = 0;
+              speed = speedIntegrated;
+            }
+          }
+          
+          // Smoothing
+          const smoothedSpeed = idx > 0 ? lastSmoothedSpeed * 0.7 + speed * 0.3 : speed;
+          lastSmoothedSpeed = smoothedSpeed;
+          return { 
+            ...row, 
+            'SPEED_MPH': Number(smoothedSpeed.toFixed(2)) || 0,
+            'ELAPSED_TIME': Number(elapsedTime.toFixed(3))
+          };
+        });
+
+        if (!extractedHeaders.includes('SPEED_MPH')) {
+          extractedHeaders.push('SPEED_MPH');
+        }
+        if (!extractedHeaders.includes('ELAPSED_TIME')) {
+          extractedHeaders.push('ELAPSED_TIME');
+        }
+
         setHeaders(extractedHeaders);
-        setData(parsedData);
+        setData(processedData);
 
         // Auto-select axes and group metrics
         if (extractedHeaders.length > 0) {
-          let xKey = extractedHeaders[0];
-          const frameCol = extractedHeaders.find(h => h.toLowerCase().includes('frame'));
-          const timeCol = extractedHeaders.find(h => h.toLowerCase().includes('time') || h.toLowerCase().includes('date'));
-          if (frameCol || timeCol) xKey = frameCol || timeCol || xKey;
+          const xKey = 'ELAPSED_TIME';
           setXAxisKey(xKey);
 
-          const numericCols = extractedHeaders.filter(h => h !== xKey && typeof parsedData[0][h] === 'number');
+          const numericCols = extractedHeaders.filter(h => h !== xKey && typeof processedData[0][h] === 'number');
           setNumericKeys(numericCols);
 
           const newPanels = [
@@ -462,7 +541,7 @@ export default function App() {
             <div className="grid grid-cols-2 gap-2">
               {numericKeys.map((key, i) => {
                 const val = latestData[key];
-                const isNumber = typeof val === 'number';
+                const isNumber = typeof val === 'number' && !isNaN(val);
                 const displayVal = isNumber ? Number(val).toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(val ?? '--');
                 return (
                   <div key={key} className="bg-[#111111] border border-[#222222] p-2 flex flex-col justify-center items-center">
@@ -575,6 +654,7 @@ export default function App() {
         if (maxGyro === 0) maxGyro = 1;
 
         const getColor = (g: number) => {
+          if (isNaN(g)) return 'rgb(0,255,0)';
           const ratio = maxGForce > 0 ? Math.min(g / maxGForce, 1) : 0;
           const r = ratio < 0.5 ? Math.floor(255 * (ratio * 2)) : 255;
           const g_col = ratio > 0.5 ? Math.floor(255 * (1 - (ratio - 0.5) * 2)) : 255;
@@ -634,6 +714,7 @@ export default function App() {
         if (maxG === 0) maxG = 1;
 
         const getColorFriction = (g: number) => {
+          if (isNaN(g)) return 'rgb(0,255,0)';
           const ratio = maxGForceFriction > 0 ? Math.min(g / maxGForceFriction, 1) : 0;
           const r = ratio < 0.5 ? Math.floor(255 * (ratio * 2)) : 255;
           const g_col = ratio > 0.5 ? Math.floor(255 * (1 - (ratio - 0.5) * 2)) : 255;
@@ -684,7 +765,7 @@ export default function App() {
           <div className="w-6 h-6 bg-[#FFCD00] rounded-sm flex items-center justify-center">
             <span className="text-[#000000] font-bold text-[14px]">T</span>
           </div>
-          <h1 className="text-[14px] font-bold tracking-[2px] text-[#FFCD00] uppercase whitespace-nowrap">Telemetry</h1>
+          <h1 className="text-[14px] font-bold tracking-[2px] text-[#FFCD00] uppercase whitespace-nowrap">Brew City Baja Telemetry</h1>
         </div>
 
         {/* File Upload */}
