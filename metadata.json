@@ -1,5 +1,5 @@
 {
-  "name": "Telemetry CSV Dashboard",
-  "description": "A utilitarian dashboard for converting CSV telemetry data into interactive graphs.",
+  "name": "Brew City Baja Telemetry",
+  "description": "Dashboard for converting DAQ data",
   "requestFramePermissions": []
 }

@@ -787,10 +787,8 @@ export default function App() {
       
       {/* Top Bar */}
       <div className="h-[60px] bg-[#0a0a0a] border-b border-[#333333] flex items-center px-4 z-10 shadow-md gap-4 shrink-0 overflow-x-auto custom-scrollbar">
-        <div className="flex items-center gap-2 mr-4 shrink-0">
-          <div className="w-6 h-6 bg-[#FFCD00] rounded-sm flex items-center justify-center">
-            <span className="text-[#000000] font-bold text-[14px]">T</span>
-          </div>
+        <div className="flex items-center gap-3 mr-4 shrink-0">
+          <img src="/logo.png" alt="Brew City Baja" className="h-10 w-auto object-contain" referrerPolicy="no-referrer" />
           <h1 className="text-[14px] font-bold tracking-[2px] text-[#FFCD00] uppercase whitespace-nowrap">Brew City Baja Telemetry</h1>
         </div>
 
