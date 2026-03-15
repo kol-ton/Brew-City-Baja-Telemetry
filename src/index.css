@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
+@import "react-grid-layout/css/styles.css";
+@import "react-resizable/css/styles.css";
+
 @theme {
   --font-sans: "Segoe UI", "Roboto", sans-serif;
   --font-mono: "Consolas", "Monaco", "Courier New", monospace;
