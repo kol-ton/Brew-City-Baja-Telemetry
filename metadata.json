@@ -1,0 +1,5 @@
+{
+  "name": "Telemetry CSV Dashboard",
+  "description": "A utilitarian dashboard for converting CSV telemetry data into interactive graphs.",
+  "requestFramePermissions": []
+}

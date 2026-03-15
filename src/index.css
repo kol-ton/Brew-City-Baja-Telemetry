@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", "Roboto", sans-serif;
+  --font-mono: "Consolas", "Monaco", "Courier New", monospace;
+}
+
+@layer base {
+  :root {
+    --bg-color: #000000;
+    --panel-bg: #121212;
+    --header-bg: #1e1e1e;
+    --text-main: #f0f0f0;
+    --text-muted: #a0a0a0;
+    --border-color: #333333;
+    --accent-gold: #FFCD00;
+    --accent-green: #00FF00;
+    --accent-red: #FF3333;
+  }
+
+  body {
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 0px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.text-shadow-gold {
+  text-shadow: 0 0 8px rgba(255, 205, 0, 0.6);
+}
