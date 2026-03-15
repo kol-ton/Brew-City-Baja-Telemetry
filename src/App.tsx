@@ -783,7 +783,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#000000] text-[#f0f0f0] font-sans overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-[#000000] text-[#f0f0f0] font-sans overflow-y-auto">
       
       {/* Top Bar */}
       <div className="h-[60px] bg-[#0a0a0a] border-b border-[#333333] flex items-center px-4 z-10 shadow-md gap-4 shrink-0 overflow-x-auto custom-scrollbar">
@@ -918,10 +918,10 @@ export default function App() {
       )}
 
       {/* Main Workspace */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-y-auto">
         
         {/* Right Panel - Main Dashboard Area */}
-        <div ref={containerRef} className="flex-1 flex flex-col bg-[#000000] relative min-w-0 overflow-hidden">
+        <div ref={containerRef} className="flex-1 flex flex-col bg-[#000000] relative min-w-0 overflow-y-auto">
           
           {data.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-6">
