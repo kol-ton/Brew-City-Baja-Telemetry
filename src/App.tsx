@@ -324,7 +324,7 @@ export default function App() {
 
     // Auto-select axes and group metrics
     if (extractedHeaders.length > 0) {
-      const xKey = 'ELAPSED_TIME';
+      const xKey = 'frame';
       setXAxisKey(xKey);
 
       const numericCols = extractedHeaders.filter(h => h !== xKey && typeof processedData[0][h] === 'number');
